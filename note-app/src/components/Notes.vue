@@ -1,39 +1,29 @@
 <script setup lang="ts">
-import { ref, onMounted } from "vue";
-import notesService from "../api/notesService";
-import type { Note } from "../api/notesService";
+import { ref, computed, onMounted } from "vue";
+import { useNotesStore } from "../stores/notes";
 
-const notes = ref<Note[]>([]);
-const newNote = ref<Note>({ title: "", content: "" });
-const selectedNote = ref<Note | null>(null);
+const store = useNotesStore();
+const selectedNote = ref(null);
 const isEditing = ref(false);
 const showAddForm = ref(false);
+const newNote = ref({ title: "", content: "" });
 
-// Fetch all notes
-const fetchNotes = async () => {
-  try {
-    const response = await notesService.getAllNotes();
-    notes.value = response.data;
-  } catch (error) {
-    console.error("Error fetching notes:", error);
-  }
-};
+// Computed: Get filtered & sorted notes
+const notes = computed(() => store.filteredNotes());
+
+// Fetch notes on mount
+onMounted(store.fetchNotes);
 
 // Add a new note
 const addNote = async () => {
   if (!newNote.value.title || !newNote.value.content) return;
-  try {
-    await notesService.createNote(newNote.value);
-    newNote.value = { title: "", content: "" };
-    showAddForm.value = false;
-    fetchNotes();
-  } catch (error) {
-    console.error("Error adding note:", error);
-  }
+  await store.addNote(newNote.value);
+  newNote.value = { title: "", content: "" };
+  showAddForm.value = false;
 };
 
-// Select a note for viewing/editing
-const openNote = (note: Note) => {
+// Open a note for viewing/editing
+const openNote = (note) => {
   selectedNote.value = { ...note };
   isEditing.value = false;
 };
@@ -41,40 +31,38 @@ const openNote = (note: Note) => {
 // Update a note
 const updateNote = async () => {
   if (!selectedNote.value) return;
-  try {
-    await notesService.updateNote(selectedNote.value.id!, {
-      ...selectedNote.value,
-      updated: new Date().toISOString(),
-    });
-    selectedNote.value = null;
-    fetchNotes();
-  } catch (error) {
-    console.error("Error updating note:", error);
-  }
+  await store.updateNote(selectedNote.value.id, selectedNote.value);
+  selectedNote.value = null;
 };
 
 // Delete a note
-const deleteNote = async (id: number) => {
-  if (confirm("Are you sure?")) {
-    try {
-      await notesService.deleteNote(id);
-      selectedNote.value = null;
-      fetchNotes();
-    } catch (error) {
-      console.error("Error deleting note:", error);
-    }
-  }
+const deleteNote = async (id) => {
+  await store.deleteNote(id);
+  selectedNote.value = null;
 };
-
-onMounted(fetchNotes);
 </script>
 
 <template>
   <div class="flex h-screen">
-    <!-- Notes Sidebar (50%) -->
+    <!-- Sidebar -->
     <div class="w-1/2 bg-gray-100 p-6 overflow-auto">
       <h1 class="text-3xl font-bold text-gray-800 mb-6">Notes</h1>
 
+      <!-- Search & Sorting -->
+      <div class="flex space-x-2 mb-4">
+        <input
+          v-model="store.searchQuery"
+          placeholder="Search notes..."
+          class="w-full p-2 border rounded-md"
+        />
+        <select v-model="store.sortBy" class="p-2 border rounded-md">
+          <option value="newest">Newest</option>
+          <option value="oldest">Oldest</option>
+          <option value="title">Title</option>
+        </select>
+      </div>
+
+      <!-- Notes List -->
       <div v-if="notes.length" class="space-y-4">
         <div
           v-for="note in notes"
@@ -86,8 +74,7 @@ onMounted(fetchNotes);
           <p class="text-gray-600 text-sm">{{ note.content.substring(0, 50) }}...</p>
         </div>
       </div>
-
-      <p v-else class="text-center text-gray-500">No notes yet.</p>
+      <p v-else class="text-center text-gray-500">No notes found.</p>
 
       <!-- Add Note Button -->
       <button
@@ -107,43 +94,24 @@ onMounted(fetchNotes);
       </div>
     </div>
 
-    <!-- Note Viewer/Editor (50%) -->
+    <!-- Note Viewer/Editor -->
     <div v-if="selectedNote" class="w-1/2 p-8">
       <h2 class="text-3xl font-semibold text-gray-900 mb-4">
         {{ isEditing ? "Edit Note" : "View Note" }}
       </h2>
 
-      <input
-        v-if="isEditing"
-        v-model="selectedNote.title"
-        class="w-full p-3 text-xl font-semibold border rounded-md"
-      />
+      <input v-if="isEditing" v-model="selectedNote.title" class="w-full p-3 text-xl font-semibold border rounded-md" />
       <h3 v-else class="text-2xl font-bold text-gray-800">{{ selectedNote.title }}</h3>
 
-      <textarea
-        v-if="isEditing"
-        v-model="selectedNote.content"
-        class="w-full p-3 mt-2 h-64 border rounded-md"
-      ></textarea>
+      <textarea v-if="isEditing" v-model="selectedNote.content" class="w-full p-3 mt-2 h-64 border rounded-md"></textarea>
       <p v-else class="text-gray-700 mt-4 text-lg">{{ selectedNote.content }}</p>
 
       <div class="flex space-x-2 mt-6">
-        <button v-if="!isEditing" @click="isEditing = true" class="px-4 py-2 bg-yellow-500 text-white rounded-md">
-          Edit
+        <button @click="isEditing = !isEditing" class="px-4 py-2 bg-yellow-500 text-white rounded-md">
+          {{ isEditing ? "Save" : "Edit" }}
         </button>
-        <button v-if="isEditing" @click="updateNote" class="px-4 py-2 bg-green-500 text-white rounded-md">
-          Save
-        </button>
-        <button @click="selectedNote = null" class="px-4 py-2 bg-gray-400 text-white rounded-md">Close</button>
-        <button @click="deleteNote(selectedNote.id!)" class="px-4 py-2 bg-red-500 text-white rounded-md">
-          Delete
-        </button>
+        <button @click="deleteNote(selectedNote.id)" class="px-4 py-2 bg-red-500 text-white rounded-md">Delete</button>
       </div>
-    </div>
-
-    <!-- Empty State -->
-    <div v-else class="w-1/2 flex items-center justify-center text-gray-400 text-2xl">
-      Select a note to view
     </div>
   </div>
 </template>
